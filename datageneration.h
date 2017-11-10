@@ -1,0 +1,4 @@
+#ifndef DATAGENERATION_H
+#define DATAGENERATION_H
+
+#endif // DATAGENERATION_H
