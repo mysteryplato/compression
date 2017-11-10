@@ -202,3 +202,155 @@ void writeDataToFile(char *pFilename,
     fclose(pFile);
 }
 //<<<----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+//>>>----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+//grace171023 解压缩函数
+
+void decompressData(float *pFloatData,
+                    short *pArrLength)
+{
+    removeDir(DATA_DIFF_DIR);                   // 删除目录及文件
+    mkdir(DATA_DIFF_DIR,0777);                  // 创建目录
+
+    clock_t startTime, endTime;                 // 压缩开始,结束时间
+    // 表头总长度
+    short totalHeaderLength = FIRST_HEADER_LENGTH + SECOND_HEADER_LENGTH;
+
+    int compressionCount;                       // 压缩的数组的个数
+    short *pHeader;                             // 表头指针
+
+    float *pNewFloatData;                       // 存放char型转float型数据
+    unsigned char *pOrigByteData;               // 存放原始byte数据指针
+
+    int filenameNumber = 0;                     // 当前文件名中的数字
+
+    startTime = clock();                        // 获取开始时间
+    //>>>-------------------------------------------------------------------------------------------------------------------------------------
+    //1 打开目录
+    DIR *pDir;                                  // 待打开的目录
+    struct dirent *pEntry = NULL;               // 待打开的文件路径
+    pDir = opendir(COMPRESSION_DIR"/");         // 找出目录中的文件
+    if ( pDir == NULL )                         // 如果目录不存在，打印错误信息
+    {
+        perror ("Couldn't open the directory!");
+    }
+    //>>>-------------------------------------------------------------------------------------------------------------------------------------
+    //2 遍历目录
+    char filename[FILENAME_MAX];
+    while ( (pEntry = readdir(pDir)) != NULL )  // while循环读取目录中的文件名
+    {
+        // 如果是当前目录"."或上层目录".."则继续循环，否则向下执行程序
+        if( strcmp(pEntry->d_name,".") == 0 ||
+                strcmp(pEntry->d_name,"..") == 0 )
+        {
+            continue;
+        }
+        // 将文件名加上路径，赋值给filename
+        sprintf(filename,COMPRESSION_DIR"/%s",pEntry->d_name);
+        //>>>-------------------------------------------------------------------------------------------------------------------------------------
+        //2.1 打开文件
+        FILE *pFile;                                     // 文件指针
+        unsigned char headerArr[totalHeaderLength];      // 表头数组
+        if( (pFile = fopen(filename,"rb+") ) == NULL)    // 打开文件失败退出
+        {
+            printf("\nCannot open file!");
+            exit(1);
+        }
+        //>>>-------------------------------------------------------------------------------------------------------------------------------------
+        //2.2 还原数据
+        // 把数组个数存放到headerArr数组中
+        fread(headerArr,sizeof(char),FIRST_HEADER_LENGTH,pFile);
+        compressionCount = headerArr[0];     // 保存数组个数，后面headerArr[0]会改变
+        pHeader = (short*)headerArr;
+        for( int i = 0; i < compressionCount; ++i )
+        {
+            // 保存byte数据长度最大值最小值
+            fread(headerArr,sizeof(char),SECOND_HEADER_LENGTH,pFile);
+            // 存放原始byte数据
+            pOrigByteData = malloc(pHeader[0] * sizeof(char));
+            if( pOrigByteData == NULL )
+            {
+                printf("内存开辟失败\n");
+                exit(1);
+            }
+            // 存放解压后新的float数据
+            pNewFloatData = malloc(pHeader[0] * sizeof(float));
+            if( pNewFloatData == NULL )
+            {
+                printf("内存开辟失败\n");
+                exit(1);
+            }
+            // 读取byte数据
+            fread(pOrigByteData,sizeof(char),pHeader[0] * sizeof(char),pFile);
+            // 获取文件名数字部分，并由字符串转为数字
+            filenameNumber = ( pEntry->d_name[8*i+4] - '0' ) * 100 +
+                    ( pEntry->d_name[8*i+5] - '0' ) * 10  +
+                    ( pEntry->d_name[8*i+6] - '0' ) * 1;
+            // 将byte数据转为float数据
+            calcDecompressedData(pHeader,
+                                 pNewFloatData,
+                                 pOrigByteData);
+            // 计算原始数据与解压后数据的差值
+            calcDiffAndWriteToFile(filenameNumber,
+                                   (int)pHeader[0],
+                                    pArrLength,
+                                    pFloatData,
+                                    pNewFloatData);
+
+            // 释放指针
+            free(pOrigByteData);
+            pOrigByteData = NULL;
+            free(pNewFloatData);
+            pNewFloatData = NULL;
+        }
+        fclose(pFile);
+    }
+    // 关闭目录
+    closedir(pDir);
+
+    endTime = clock();                                  // 获取结束时间
+    double decompressionTime;                           // 解压缩运行时间
+    decompressionTime = (double)(endTime - startTime) / CLOCKS_PER_SEC;
+    printf("解压缩运行时间：%fs\n",decompressionTime);
+}
+
+void calcDecompressedData(short *pHeader,
+                          float *pNewFloatData,
+                          unsigned char *pOrigByteData)
+{
+    float scale;
+    scale = (pHeader[2] - pHeader[1])/255.0;            // 获取比例
+
+    // 计算差值并存入文件
+    for( int j = 0; j < (int)pHeader[0]; ++j )          // 遍历数组中数据
+    {
+        pNewFloatData[j] = pOrigByteData[j] * scale + pHeader[1];
+    }
+}
+
+void calcDiffAndWriteToFile(int filenameNumber,
+                            int origLength,
+                            short *pArrLength,
+                            float *origData,
+                            float *newData)
+{
+    char path[FILENAME_MAX];
+
+    float floatDataDiff;                     // float数据的差值
+    int origDataOffset;                      // 原始数据偏移
+
+    sprintf(path,DATA_DIFF_DIR"/"DIFF_VALUE_FILENAME,filenameNumber);
+    FILE *pFile = fopen(path, "a+");         // 以追加形式的打开文件，没有文件则创建
+
+    for( int j = 0; j < origLength; ++j )    // 遍历数组中数据
+    {
+        // 获取当前数据的偏移
+        origDataOffset =  getDataOffset(pArrLength,filenameNumber);
+        floatDataDiff = origData[origDataOffset+j] - newData[j];      // 获取差值
+        fprintf(pFile,"%.2f\n",floatDataDiff);
+    }
+    // 关闭文件
+    fclose(pFile);
+}
+//<<<----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
