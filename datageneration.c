@@ -65,3 +65,55 @@ int getDataOffset(short *pArrLength, int arrIndex)
     return dataOffset;  // 返回数据的偏移量
 }
 //<<<----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// 删除文件目录
+int removeDir(const char *dir)
+{
+    char currentDir[] = ".";
+    char upDir[] = "..";
+    char dirName[FILENAME_MAX];
+    DIR *pDir;
+    struct dirent *pEntry;
+    struct stat dirStat;
+
+    // 如果文件存在
+    if ( 0 != access(dir, F_OK) )
+    {
+        return 0;
+    }
+    // 如果获取信息失败
+    if ( 0 > stat(dir, &dirStat) )
+    {
+        perror("get directory stat error");
+        return -1;
+    }
+    // 如果是一般文件，直接删除
+    if ( S_ISREG(dirStat.st_mode) )
+    {
+        remove(dir);
+    }
+    // 如果是目录文件，递归删除目录中内容
+    else if ( S_ISDIR(dirStat.st_mode) )
+    {
+        // 打开目录
+        pDir = opendir(dir);
+        while ( (pEntry=readdir(pDir)) != NULL )
+        {
+            // 忽略"."和".."隐藏目录
+            if ( (0 == strcmp(currentDir, pEntry->d_name)) || (0 == strcmp(upDir, pEntry->d_name)) )
+            {
+                continue;
+            }
+            sprintf(dirName, "%s/%s", dir, pEntry->d_name);
+            removeDir(dirName);   // 递归调用
+        }
+        // 关闭目录
+        closedir(pDir);
+        rmdir(dir);               // 删除空目录
+    }
+    else
+    {
+        perror("unknow file type!");
+    }
+    return 0;
+}
